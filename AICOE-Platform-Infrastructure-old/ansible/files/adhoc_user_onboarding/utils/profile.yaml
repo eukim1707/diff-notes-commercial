@@ -1,0 +1,12 @@
+apiVersion: kubeflow.org/v1beta1
+kind: Profile
+metadata:
+  name: NAMESPACE # replace with the name of profile you want, this will be user's namespace name
+spec:
+  owner:
+    kind: User
+    name: USERNAME@deloitte.com # replace with the email of the user
+  plugins:
+    - kind: AwsIamForServiceAccount
+      spec:
+        awsIamRole: arn:aws:iam::{{ aws_account_id }}:role/NAMESPACE-{{ team }}-eks-cluster-role

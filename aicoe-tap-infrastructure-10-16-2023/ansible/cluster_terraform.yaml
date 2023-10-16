@@ -1,0 +1,194 @@
+---
+- hosts: localhost
+  connection: local
+
+  vars:
+    ssh_key: "{{ lookup('env', 'TF_VAR_ssh_key') }}"
+    tf_state_bucket: "{{ lookup('env', 'TF_VAR_tf_state_bucket') }}"
+
+  tasks:
+    - name: run terraform apply
+      terraform:
+        variables_file: parameters.tfvars
+        #plan_file: plan.out
+        project_path: "../terraform-infrastructure"
+        state: present
+      register: terraform_output
+      environment:
+        TF_VAR_ssh_key: "{{ ssh_key }}"
+      tags: terraform
+
+    - debug:
+        var: terraform_output
+
+    # Use alterntative to below (till task: ensure ~/.ssh/config file exists) and comment out everything till the next task
+    # - name: populate terraform outputs from tfstate file
+    #   import_tasks:
+    #     file: outputs.yaml
+    #   tags: output
+
+
+    - name: populate terraform outputs from tfstate file
+      block:
+        - name: delete previous copied tfstate file if it exists
+          file:
+            path: "./terraform-copy.tfstate"
+            state: absent
+
+        - name: get tfstate from s3 bucket
+          aws_s3:
+            bucket: "{{ tf_state_bucket }}"
+            object: terraform.tfstate
+            dest: "./terraform-copy.tfstate"
+            mode: get
+
+        - name: save tfstate copy to a variable as a fact
+          set_fact:
+            jsondata: "{{ lookup('file', './terraform-copy.tfstate') }}"
+
+        - name: set aws_region
+          set_fact:
+            aws_region: "{{ jsondata | json_query('outputs.aws_region.value') }}"
+
+        - name: set aws_account_id
+          set_fact:
+            aws_account_id: "{{ jsondata | json_query('outputs.aws_account_id.value') }}"
+
+        - name: set key_name
+          set_fact:
+            key_name: "{{ jsondata | json_query('outputs.key_name.value') }}"
+
+        - name: set istio_dns
+          set_fact:
+            istio_dns: "{{ jsondata | json_query('outputs.istio_dns.value') }}"
+
+        - name: set istio_cert
+          set_fact:
+            istio_cert: "{{ jsondata | json_query('outputs.istio_cert.value') }}"
+
+        - name: set hosted_zone
+          set_fact:
+            hosted_zone: "{{ jsondata | json_query('outputs.hosted_zone.value') }}"
+
+        - name: set gitops_branch
+          set_fact:
+            gitops_branch: "{{ jsondata | json_query('outputs.gitops_branch.value') }}"
+
+        - name: set client_id
+          set_fact:
+            client_id: "{{ jsondata | json_query('outputs.client_id.value') }}"
+
+        - name: set client_secret
+          set_fact:
+            client_secret: "{{ jsondata | json_query('outputs.client_secret.value') }}"
+
+        - name: set bastion dns
+          set_fact:
+            bastion_dns: "{{ jsondata | json_query('outputs.bastion_dns.value') }}"
+
+        - name: set cluster name
+          set_fact:
+            cluster_name: "{{ jsondata | json_query('outputs.cluster_name.value') }}"
+
+        - name: set team
+          set_fact:
+            team: "{{ jsondata | json_query('outputs.team.value') }}"
+
+        - name: set oidc url
+          set_fact:
+            oidc_url: "{{ jsondata | json_query('outputs.oidc_url.value') }}"
+
+        - name: set bucket name
+          set_fact:
+            bucket_name: "{{ jsondata | json_query('outputs.bucket_name.value') }}"
+
+        - name: set security group
+          set_fact:
+            security_group: "{{ jsondata | json_query('outputs.security_group.value') }}"
+
+        - name: set routeable subnet 1 id
+          set_fact:
+            routeable_subnet_1_id: "{{ jsondata | json_query('outputs.routeable_subnet_1_id.value') }}"
+
+        - name: set routeable subnet 2 id
+          set_fact:
+            routeable_subnet_2_id: "{{ jsondata | json_query('outputs.routeable_subnet_2_id.value') }}"
+
+        - name: set non-routeable subnet 1 id
+          set_fact:
+            nonrouteable_subnet_1_id: "{{ jsondata | json_query('outputs.nonrouteable_subnet_1_id.value') }}"
+
+        - name: set non-routeable subnet 2 id
+          set_fact:
+            nonrouteable_subnet_2_id: "{{ jsondata | json_query('outputs.nonrouteable_subnet_2_id.value') }}"
+
+        - name: set gpu_group_max
+          set_fact:
+            gpu_group_max: "{{ jsondata | json_query('outputs.gpu_group_max.value') }}"
+
+        - name: set gpu_group_min
+          set_fact:
+            gpu_group_min: "{{ jsondata | json_query('outputs.gpu_group_min.value') }}"
+
+        - name: set gpu_group_default
+          set_fact:
+            gpu_group_default: "{{ jsondata | json_query('outputs.gpu_group_default.value') }}"
+
+        - name: set infrastructure_group_max
+          set_fact:
+            infrastructure_group_max: "{{ jsondata | json_query('outputs.infrastructure_group_max.value') }}"
+
+        - name: set infrastructure_group_min
+          set_fact:
+            infrastructure_group_min: "{{ jsondata | json_query('outputs.infrastructure_group_min.value') }}"
+
+        - name: set infrastructure_group_default
+          set_fact:
+            infrastructure_group_default: "{{ jsondata | json_query('outputs.infrastructure_group_default.value') }}"
+
+        - name: set worker_group_max
+          set_fact:
+            worker_group_max: "{{ jsondata | json_query('outputs.worker_group_max.value') }}"
+
+        - name: set worker_group_min
+          set_fact:
+            worker_group_min: "{{ jsondata | json_query('outputs.worker_group_min.value') }}"
+
+        - name: set worker_group_default
+          set_fact:
+            worker_group_default: "{{ jsondata | json_query('outputs.worker_group_default.value') }}"
+
+        - name: set efs file system ID
+          set_fact:
+            efs_filesystem_id: "{{ jsondata | json_query('outputs.efs_filesystem_id.value') }}"
+
+        - name: get path to ansible folder
+          shell: pwd
+          register: pwd
+
+        - name: set path to ansible folder
+          set_fact:
+            ansible_path: "{{ pwd.stdout }}"
+
+      tags: outputs
+
+    - name: ensure ~/.ssh/config file exists
+      copy:
+        content: ""
+        dest: "~/.ssh/config"
+        force: no
+        mode: 644
+
+    - name: edit .ssh/config
+      blockinfile:
+        path: "~/.ssh/config"
+        block: |
+          Host bastion
+            Hostname {{ bastion_dns }}
+            User {{ username }}
+            IdentityFile ~/.ssh/{{ key_name }}
+
+    - name: copy templated trust.json file to ansible files folder
+      template:
+        src: trust.json
+        dest: "{{ ansible_path }}/files/trust.json"

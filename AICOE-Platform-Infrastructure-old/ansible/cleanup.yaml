@@ -1,0 +1,9 @@
+---
+  #outputs
+  - import_playbook: local.yaml
+
+  #remove ingress so dns-external deletes ALB and Route 53 records
+  - import_playbook: cleanup_bastion.yaml
+
+  #destroy terraform
+  - import_playbook: destroy_infra.yaml

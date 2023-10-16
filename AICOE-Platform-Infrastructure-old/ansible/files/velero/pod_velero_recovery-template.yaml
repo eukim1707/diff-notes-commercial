@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: velero-recovery
+  namespace: velero
+spec:
+  serviceAccountName: "{{ service_account }}"
+  restartPolicy: Never
+  containers:
+  - image: {{ aws_account_id }}.dkr.ecr.us-east-1.amazonaws.com/aicoe-platform/velero-recovery:v0.0.1
+    name: velero-recovery-pod
+    command: ["/bin/bash","-c"]
+    args: ["./velero_recovery.sh"]
+
+    env:
+    - name: cluster_name
+      value: "{{ cluster_name }}"
+
+    # To restore the data,add value for backup_name in velero-parameter config map
+    - name: backup_name
+      valueFrom:
+        configMapKeyRef:
+          name: velero-parameter
+          key: backup_name
+          optional: false
+
+    # Specify selective comma-separated namespaces to restore from the backup, add value in the velero-parameter config map
+    - name: namespaces_to_restore
+      valueFrom:
+        configMapKeyRef:
+          name: velero-parameter
+          key: namespaces_to_restore
+          optional: true
+
+    - name: stop_notebooks
+      valueFrom:
+        configMapKeyRef:
+          name: velero-parameter
+          key: stop_notebooks
+          optional: false
+

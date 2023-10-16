@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-grafana
+  namespace: grafana
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::{{ aws_account_id }}:role/{{ cluster_name }}-grafana-role

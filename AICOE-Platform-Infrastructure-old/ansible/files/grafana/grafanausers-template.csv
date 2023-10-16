@@ -1,0 +1,4 @@
+username,accessteams,password,dashboard,onboarding
+<user1>,"<team1,team2,team3>",<del-user1>,ALL,Y
+<user2>,"<team3,team4>",<del-user2>,"Kubeflow_cpu_utilization_template.json,kubeflow_gpu_utilization_template.json",Y
+<user3>,"<team1,team4>",<del-user3>,"Kubeflow_cpu_utilization_template.json,kubeflow_gpu_utilization_template.json,kubeflow_memory_utilization_template.json",Y

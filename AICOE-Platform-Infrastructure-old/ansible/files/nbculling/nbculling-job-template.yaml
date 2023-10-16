@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nbculling-job
+  namespace: nbculling
+spec:
+  schedule: "*/240 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+                serviceAccountName: sa-nbculling
+                containers:
+                - image: "{{ aws_account_id }}.dkr.ecr.us-east-1.amazonaws.com/aicoe-platform/notebook-culling:v_promexporter_0.0.2"
+                  name: nbculling  
+                  command: ["/bin/bash","-c"]
+                  args: ["bash nbculling-kf1.7.sh;"]
+                  env:
+                    - name: cputhresholdtime
+                      valueFrom:
+                        configMapKeyRef:
+                          name: nb-parameter
+                          key: cputhresholdtime       
+
+                    - name: gputhresholdtime
+                      valueFrom:
+                        configMapKeyRef:
+                          name: nb-parameter
+                          key: gputhresholdtime
+
+                    - name: s3bucket
+                      valueFrom:
+                        configMapKeyRef:
+                          name: nb-parameter
+                          key: s3bucket
+
+                    - name: clustername
+                      valueFrom:
+                        configMapKeyRef:
+                          name: nb-parameter
+                          key: clustername
+
+                    - name: exclude_namespaces
+                      valueFrom:
+                        configMapKeyRef:
+                          name: nb-parameter
+                          key: exclude_namespaces
+                          
+                restartPolicy: Never

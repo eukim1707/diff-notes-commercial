@@ -1,0 +1,285 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+    
+    - name: "ensure user {{ username }} exists"
+      user:
+        name: "{{ username }}"
+        shell: /bin/bash            
+
+    - name: upgrade all packages
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Install yum utils
+      yum:
+        name: [
+          yum-utils,          
+          gcc,
+          systemd-devel,
+          python3-devel,
+          git          
+        ]
+        state: latest     
+
+    #TODO: pin versions
+    - name: install python dependencies          
+      pip:
+        name:
+          - kubernetes==26.1.0
+          - systemd==0.16.1
+          - pyyaml==6.0
+          - boto3==1.26.102
+          - kubernetes-validate==1.26.0
+          - urllib3==1.26.15
+        extra_args: --upgrade
+        executable: pip3
+
+    - name: install docker
+      yum:
+        name: docker
+        state: latest
+      notify:
+        start docker
+
+    - name: "ensure src directory exists"
+      file:
+        path: "/home/{{ username }}/src"
+        state: directory
+        mode: g+rw
+        owner: "{{ username }}"
+        group: "{{ username }}"
+
+    - name: copy aws cli install script
+      copy:
+        src: update_aws_cli.sh
+        dest: "/home/{{ username }}/src/update_aws_cli.sh"
+        mode: +x
+      tags: aws
+
+    # - name: install aws cli
+    #   shell: bash update_aws_cli.sh
+    #   args:
+    #     chdir: "/home/{{ username }}/src/"
+    #   ignore_errors: yes
+    #   tags: aws
+
+    - name: install kubectl
+      get_url:
+        url: https://s3.us-west-2.amazonaws.com/amazon-eks/1.26.2/2023-03-17/bin/linux/amd64/kubectl
+        dest: /usr/bin
+        mode: 777
+      tags: kubectl
+
+    - name: add kubectl alias and completion
+      lineinfile:
+        path: "/home/{{ username }}/.bashrc"
+        regexp: "^{{ item }}"
+        line: "{{ item }}"
+        state: present
+      loop: 
+        - source <(kubectl completion bash)
+        - alias k=kubectl
+        - complete -F __start_kubectl k
+        - export KUBE_EDITOR=nano
+
+    - name: ensure ~/.kube directory exists
+      file:
+        path: "/home/{{ username }}/.kube"
+        state: directory
+        owner: "{{ username }}"
+        group: "{{ username }}"
+
+    - name: "generate kube config file for {{ username }}"
+      become: yes
+      become_user: "{{ username }}"
+      command: "aws eks update-kubeconfig --region {{ aws_region }} --name {{ cluster_name }}"
+      tags: kubeconfig
+  
+    - name: ensure /usr/bin/bastion directory exists      
+      file:
+        path: "/usr/bin/bastion"
+        state: directory
+
+    - name: ensure log directory exists      
+      file:
+        path: "/var/log/bastion"
+        state: directory
+        mode: 0770
+        owner: "{{ username }}"
+        group: "{{ username }}"
+
+    - name: set default ACL for log file
+      ansible.posix.acl: 
+        path: /var/log/bastion
+        default: yes
+        etype: other
+        recursive: yes
+        permissions: "0"
+        state: present
+
+    - name: copy shell script
+      copy:
+        src: ssh_login.sh
+        dest: /usr/bin/bastion/shell
+        mode: 0700
+        owner: "{{ username }}"
+        group: "{{ username }}"
+
+    - name: copy s3 sync script
+      template:
+        src: sync_s3.sh
+        dest: /usr/bin/bastion/sync_s3
+        mode: 700
+
+    - name: schedule daily security updates
+      cron:
+        name: "scheduled security updates"
+        minute: "0"
+        hour: "0"
+        state: present
+        job: "yum -y update --security"
+
+    - name: schedule log sync backup to s3 bucket
+      cron:
+        name: "sync logs to s3"
+        minute: "5"
+        state: present
+        job: "/usr/bin/bastion/sync_s3"        
+
+    - name: get block device UUID
+      command: blkid /dev/xvda1 -s UUID -o value
+      register: block_id
+    - debug:
+        var: block_id.stdout
+
+    - name: hide process ids of root user processes from others
+      mount:
+        path: /proc        
+        fstype: xfs
+        opts: remount,rw,hidepid=2
+        src: "UUID={{ block_id.stdout }}"
+        state: mounted
+
+    - name: add force command to sshd
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        line: ForceCommand /usr/bin/bastion/shell
+        state: present
+        insertafter: EOF
+      notify:
+        restart sshd
+      
+    - name: turn off x11 forwarding
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        line: X11Forwarding no
+        regexp: "^X11Forwarding"
+        state: present
+      notify:
+        restart sshd
+    
+    - name: get eksctl    
+      unarchive:
+        src: "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_{{ ansible_system }}_amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: yes
+
+    - name: get kfctl
+      unarchive:
+        src: "https://github.com/kubeflow/kfctl/releases/download/v1.2.0/kfctl_v1.2.0-0-gbc038f9_linux.tar.gz"
+        dest: /usr/bin
+        remote_src: yes
+        mode: "+x"
+    
+    # Not required now
+    # - name: get aws-iam-authenticator
+    #   get_url:
+    #     url: https://amazon-eks.s3.us-west-2.amazonaws.com/1.19.6/2021-01-05/bin/linux/amd64/aws-iam-authenticator
+    #     dest: /usr/bin
+    #     mode: 755
+
+    - name: get kustomize
+      become: true
+      # shell: curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash
+      get_url:
+        url: https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v3.2.3/kustomize_kustomize.v3.2.3_linux_amd64
+        # url: https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.0.1/kustomize_v5.0.1_linux_amd64.tar.gz
+        dest: /usr/local/bin/kustomize
+        mode: "a+x"
+
+    - name: copy helm install script
+      copy:
+        src: install_helm.sh
+        dest: "/home/{{ username }}/src/helm.sh"
+        mode: +x
+      notify:
+        install helm
+      tags: helm      
+
+    - name: copy cni plugin
+      copy:
+        src: cni.yaml
+        dest: "/home/{{ username }}/src/cni.yaml"
+      tags: cni
+
+    - name: apply cni plugin
+      become: yes
+      become_user: "{{ username }}"
+      kubernetes.core.k8s:      
+        state: present
+        src: "/home/{{ username }}/src/cni.yaml"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+      tags: cni
+
+    - name: create and apply ENIConfigs
+      include_tasks: az.yaml
+      loop:
+        - "{{ nonrouteable_subnet_1_id }}"
+        - "{{ nonrouteable_subnet_2_id }}"
+      tags: eni
+
+    - name: set node group min, max and desired values
+      command: "aws eks update-nodegroup-config --cluster-name '{{ cluster_name }}' --nodegroup-name '{{ item.name }}' --scaling-config minSize={{ item.min }},maxSize={{ item.max }},desiredSize={{ item.desired}} --region {{ aws_region }}"
+      loop:
+        - { 
+            name: "{{ cluster_name }}-gpus", 
+            min: "{{ gpu_group_min }}", 
+            max: "{{ gpu_group_max }}", 
+            desired: "{{ gpu_group_default }}" 
+          }
+        - { 
+            name: "{{ cluster_name }}-infrastructure", 
+            min: "{{ infrastructure_group_min }}", 
+            max: "{{ infrastructure_group_max }}", 
+            desired: "{{ infrastructure_group_default }}" 
+          }
+        - { 
+            name: "{{ cluster_name }}-workers", 
+            min: "{{ worker_group_min }}",
+            max: "{{ worker_group_max }}",
+            desired: "{{ worker_group_default }}"
+          }
+      tags: node_groups
+
+  handlers:
+      
+    - name: start docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: restart sshd      
+      service:
+        name: sshd
+        state: restarted
+
+    - name: install helm
+      shell: bash helm.sh --version v3.8.2
+      args:
+        chdir: "/home/{{ username }}/src/"
+      ignore_errors: yes

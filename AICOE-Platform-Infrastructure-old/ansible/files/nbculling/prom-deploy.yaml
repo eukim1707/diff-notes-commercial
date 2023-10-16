@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: promexporter
+  namespace: nbculling
+  labels:
+    app.managed.by: nbpromexporter
+  annotations:
+    deployment.kubernetes.io/revision: '1'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.managed.by: nbpromexporter
+  template:
+    metadata:
+      labels:
+        app.managed.by: nbpromexporter
+    spec:
+      volumes:
+        - name: workdir
+          emptyDir: {}
+      initContainers:
+        - name: init
+          image: >-
+            {{ aws_account_id }}.dkr.ecr.us-east-1.amazonaws.com/aicoe-platform/notebook-culling:v_promexporter_0.0.2
+          command: ['/bin/bash', '-c', "bash notebook-metadata.sh && echo `pwd` && ls *.json && cp *.json ../../nbdata "]
+          envFrom:
+            - configMapRef:
+                name: cm-promexporter
+          resources: {}
+          volumeMounts:
+            - name: workdir
+              mountPath: /nbdata
+          imagePullPolicy: Always
+      containers:
+        - name: nbexporter
+          image: >-
+            {{ aws_account_id }}.dkr.ecr.us-east-1.amazonaws.com/aicoe-platform/notebook-culling:v_promexporter_0.0.2
+          command: ["/bin/bash","-c","bash startup.sh"]
+          envFrom:
+            - configMapRef:
+                name: cm-promexporter
+          resources: {}
+          volumeMounts:
+            - name: workdir
+              mountPath: /nbdata
+          livenessProbe:
+            tcpSocket:
+              port: 9878
+            initialDelaySeconds: 60
+            timeoutSeconds: 60
+            periodSeconds: 1800
+            successThreshold: 1
+            failureThreshold: 6
+      serviceAccountName: sa-prom-custom
+      serviceAccount: sa-prom-custom
+
+

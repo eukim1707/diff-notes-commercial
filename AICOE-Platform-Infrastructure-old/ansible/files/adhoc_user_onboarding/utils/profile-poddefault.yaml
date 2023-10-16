@@ -1,0 +1,40 @@
+apiVersion: kubeflow.org/v1alpha1
+kind: PodDefault
+metadata:
+  name: access-ml-pipeline
+  namespace: NAMESPACE
+spec:
+  desc: Allow access to Kubeflow Pipelines
+  selector:
+    matchLabels:
+      access-ml-pipeline: "true"
+  volumes:
+    - name: volume-kf-pipeline-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 7200
+              audience: pipelines.kubeflow.org
+  volumeMounts:
+    - mountPath: /var/run/secrets/kubeflow/pipelines
+      name: volume-kf-pipeline-token
+      readOnly: true
+  env:
+    - name: KF_PIPELINES_SA_TOKEN_PATH
+      value: /var/run/secrets/kubeflow/pipelines/token
+    - name: AWS_BUCKET
+      value: NAMESPACE
+---
+apiVersion: kubeflow.org/v1alpha1
+kind: PodDefault
+metadata:
+  name: istio-injection-off
+  namespace: NAMESPACE
+spec:
+  desc: Disable istio sidecar injection for notebook
+  selector:
+    matchLabels:
+      istio-injection-off: "true"
+  annotations:
+    sidecar.istio.io/inject: "false"

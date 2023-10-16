@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: minio-pod
+  namespace: cserver-minio
+spec:
+  serviceAccountName: sa-minio
+  containers:
+  - image: {{ aws_account_id }}.dkr.ecr.us-east-1.amazonaws.com/aicoe-platform/minio:v0.0.1
+    name: miniojob
+    imagePullPolicy: Always
+    command: ["/bin/sh","-c"]
+    args: ["bash minio-multitenancy.sh ;"]
+
+    env:
+      - name: SECRET_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: minio-creds-secret
+            key: accesskey
+            optional: false 
+
+      - name: SECRET_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: minio-creds-secret
+            key: secretkey
+            optional: false
+      
+      - name: s3bucket
+        valueFrom:
+          configMapKeyRef:
+            name: minio-params
+            key: s3bucket
+            optional: false
+      
+      - name: clustername
+        valueFrom:
+          configMapKeyRef:
+            name: minio-params
+            key: clustername
+            optional: false
+
+  restartPolicy: Never

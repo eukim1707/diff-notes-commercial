@@ -1,0 +1,253 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: deploy minio
+      block:
+        # Prepare minio directory on bastion
+        - name: ensure minio directory exists
+          file:
+            path: "/home/{{ username }}/src/minio"
+            state: directory
+            mode: g+rw
+            owner: "{{ username }}"
+            group: "{{ username }}"
+        
+        # Create namespace for minio tenant
+        - name: Create a minio namespace
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            api_version: v1
+            state: present
+            kind: Namespace
+            name: cserver-minio
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        # Get files ready on bastion
+        - name: copy minio AuthorizationPolicy file to bastion 
+          copy:
+            src: allow-pod.yaml
+            dest: "/home/{{ username }}/src/minio/allow-pod.yaml"
+
+        - name: copy minio Tenant file to bastion 
+          template:
+            src: deployment-tenant-creation.yaml
+            dest: "/home/{{ username }}/src/minio/deployment-tenant-creation.yaml"
+
+        - name: copy minio-deployment Pod file to bastion 
+          copy:
+            src: deployment-minio-object.yaml
+            dest: "/home/{{ username }}/src/minio/deployment-minio-object.yaml"
+        
+        - name: copy minio container object script to bastion
+          copy:
+            src: container-minio-object.sh
+            dest: "/home/{{ username }}/src/minio/container-minio-object.sh"
+
+        - name: copy minio policy file to bastion
+          copy:
+            src: policy-temp.json
+            dest: "/home/{{ username }}/src/minio/policy-temp.json"
+            mode: 700
+
+        - name: copy minio-vs file to bastion 
+          copy:
+            src: minio-vs.yaml
+            dest: "/home/{{ username }}/src/minio/minio-vs.yaml"
+
+        # MinIO plugin
+        - name: download kubectl-minio plugin for v4.4.26
+          get_url:
+            url: https://github.com/minio/operator/releases/download/v4.4.26/kubectl-minio_4.4.26_linux_amd64
+            dest: /usr/local/bin
+            mode: 777
+
+        - name: initialize minio operator
+          become: yes
+          become_user: "{{ username }}"
+          shell: "/usr/local/bin/kubectl-minio_4.4.26_linux_amd64 init"
+        
+        # Create secret, tenant, and virtual service resources for MinIO Tenant
+        - name: check if minio-creds-secret exists
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s_info:
+            kind: Secret
+            namespace: cserver-minio
+            name: minio-creds-secret
+          register: secretcheck
+          vars:
+            ansible_python_interpreter: /usr/bin/python3 
+        - debug:
+            var: secretcheck.resources
+
+        - name: create accesskey for minio-creds-secret
+          become: yes
+          become_user: "{{ username }}"
+          shell: "echo -n {{ team }} | base64"
+          register: minio_admin_access
+          when: secretcheck.resources == []
+
+        - debug:
+            var: minio_admin_access.stdout
+
+        - name: create secretkey for minio-creds-secret
+          become: yes
+          become_user: "{{ username }}"
+          shell: "echo -n {{ team }}_{{ ansible_date_time.iso8601_basic }} | base64"
+          register: minio_admin_secret
+          when: secretcheck.resources == []
+
+        - debug:
+            var: minio_admin_secret.stdout
+
+        - name: create minio-creds-secret
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            state: present
+            kind: Secret
+            namespace: cserver-minio
+            name: minio-creds-secret
+            definition:
+              apiVersion: v1
+              type: Opaque
+              data:
+                accesskey: "{{ minio_admin_access.stdout }}"
+                secretkey: "{{ minio_admin_secret.stdout }}"
+          when: secretcheck.resources == []
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: apply pod.yaml 
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/minio/allow-pod.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3 
+
+        - name: apply deployment tenant creation 
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/minio/deployment-tenant-creation.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: wait cserver-minio pods to be running
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get pods -n cserver-minio -o json"
+          register: miniopods
+          until: 
+            - miniopods.stdout|from_json|json_query('items[*].status.phase')|unique == ["Running"]
+          retries: 180
+          delay: 5
+
+        - name: apply minio vs 
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/minio/minio-vs.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+      tags:
+        minio_tenant
+
+    - name: create minio buckets in team namespaces
+      block:
+        
+        - name: get profiles for list of team namespaces
+          become: yes
+          become_user: "{{ username }}"
+          shell: kubectl get profiles -o json
+          register: team_namespaces
+
+        - name: set profile output
+          set_fact:
+            profile_output: "{{ team_namespaces.stdout | from_json }}"
+
+        - name: set fact for user namespaces
+          set_fact:
+            namespaces: "{{ profile_output | json_query('items[*].metadata.name') }}"
+
+        - name: copy team namespaces to file
+          copy:
+            content: "{{ namespaces|join('\n') }}"
+            dest: "/home/{{ username }}/src/minio/team_namespaces.txt"
+
+        - name: create configmap
+          become: yes
+          become_user: "{{ username }}"
+          args:
+            chdir: "/home/{{ username }}/src/minio"
+          shell: kubectl create cm policy-configmap -n cserver-minio --from-file=policy-temp.json --from-file=team_namespaces.txt --from-file=container-minio-object.sh
+
+        - name: wait for tenant to be fully ready before it can be properly configured
+          pause:
+            minutes: 1
+
+        - name: run minio pod for creating minio buckets, policies, users
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/minio/deployment-minio-object.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: wait for minio tasks to complete
+          become: yes
+          become_user: "{{ username }}"
+          shell: kubectl get pod -n cserver-minio minio-deployment -o json
+          register: miniojob
+          until: 
+            - miniojob.stdout|from_json|json_query('status.phase') == "Succeeded"
+          retries: 360
+          delay: 10
+        - debug:
+            var: miniojob.stdout|from_json|json_query('status.phase') == "Succeeded"
+        
+        - name: get logs of completed minio job
+          become: yes
+          become_user: "{{ username }}"
+          shell: kubectl logs -n cserver-minio minio-deployment
+          register: miniologs
+
+        - name: save logs to bastion
+          copy:
+            content: "{{ miniologs.stdout }}"
+            dest: "/home/{{ username }}/src/minio/logs_{{ ansible_date_time.iso8601_basic }}.yaml"
+
+        - name: delete configmap
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            state: absent
+            kind: ConfigMap
+            namespace: cserver-minio
+            name: policy-configmap
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: delete pod
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            state: absent
+            kind: Pod
+            namespace: cserver-minio
+            name: minio-deployment
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+      tags:
+        minio_buckets

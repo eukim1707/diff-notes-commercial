@@ -1,0 +1,35 @@
+---
+- hosts: bastion
+  become: yes
+
+  tasks:
+    - name: Deploying resource quotas for GPU usage
+      block:
+        - name: Remove gpu-quota folder if exists
+          file:
+            path: "/home/{{ username }}/src/gpu-quota"
+            state: absent
+
+        - name: ensure gpu-quota directory exists
+          file:
+            path: "/home/{{ username }}/src/gpu-quota"
+            state: directory
+            mode: g+rw
+            owner: "{{ username }}"
+            group: "{{ username }}"
+
+        - name: Copy gpu-quota files to bastion host
+          template:
+            src: "{{ item }}"
+            dest: "/home/{{ username }}/src/gpu-quota/{{ item | basename | replace('-template','')}}"
+          with_fileglob:
+            - "gpu-quota/*"
+
+        - name: run kustomize command to deploy gpu-quota
+          become: yes
+          become_user: "{{ username }}"
+          shell: "/usr/local/bin/kustomize build . | kubectl apply -f -"
+          args:
+            chdir: "/home/{{ username }}/src/gpu-quota"
+      tags:
+        gpu-quota

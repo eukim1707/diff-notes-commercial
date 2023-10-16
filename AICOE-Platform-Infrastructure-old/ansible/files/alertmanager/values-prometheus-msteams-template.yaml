@@ -1,0 +1,18 @@
+# config.yaml
+---
+replicaCount: 1
+image:
+  repository: quay.io/prometheusmsteams/prometheus-msteams
+  tag: v1.5.1
+
+connectors:
+# in alertmanager, this will be used as http://prometheus-msteams:2000/aicoe
+- aicoe: "{{ alert_channel_webhook_url }}"
+
+# Enable metrics for prometheus operator
+metrics:
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: prometheus # change this accordingly
+    scrapeInterval: 30s

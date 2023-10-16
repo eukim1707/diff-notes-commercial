@@ -1,0 +1,44 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: deploy efs
+      block:
+        - name: Install efs csi driver
+          become: yes
+          become_user: "{{ username }}"
+          shell: kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=tags/v1.3.4"
+
+        - name: copy efs template yaml file to bastion 
+          template:
+            src: csi-service.yaml
+            dest: "/home/{{ username }}/src/csi-service.yaml"
+
+        - name: apply efs service account file
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/csi-service.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: copy storage class file 
+          template:
+            src: storageclass.yaml
+            dest: "/home/{{ username }}/src/storageclass.yaml"
+
+        - name: Apply storage class file
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/storageclass.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+      tags:
+        efs
+
+   

@@ -1,0 +1,104 @@
+server:
+  tolerations:
+  - key: "nvidia.com/gpu"
+    operator: "Equal"
+    value: "Exists"
+    effect: "NoSchedule"
+
+  persistentVolume:
+    size: 20Gi
+
+  ## Prometheus data retention period (default if not specified is 15 days)
+  retention: "45d"
+
+# adds additional scrape configs to prometheus.yml
+# must be a string so you have to add a | after extraScrapeConfigs:
+# example adds prometheus-blackbox-exporter scrape config
+extraScrapeConfigs: |
+  - job_name: dcgm-exporter
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+    - targets: ['dcgm-exporter.grafana.svc.cluster.local:9400']
+    relabel_configs:
+    - source_labels: [__address__]
+      target_label: __param_target
+    - source_labels: [__param_target]
+      target_label: instance
+    - target_label: __address__
+      replacement: dcgm-exporter:9400
+
+  - job_name: cert-exporter
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+    - targets: ['cert-exporter.grafana.svc.cluster.local:8080']
+    relabel_configs:
+    - source_labels: [__address__]
+      target_label: __param_target
+    - source_labels: [__param_target]
+      target_label: instance
+    - target_label: __address__
+      replacement: cert-exporter.grafana.svc.cluster.local:8080
+
+  - job_name: 'prometheus-blackbox-exporter'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - https://{{istio_dns}}.{{hosted_zone}}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: prometheus-blackbox-exporter:9115
+    
+  - job_name: kubecost
+    honor_labels: true
+    scrape_interval: 1m
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    scheme: http
+    dns_sd_configs:
+    - names:
+      - kubecost-cost-analyzer
+      type: 'A'
+      port: 9003
+      
+  - job_name: nbculling-exporter
+    scrape_interval: 15s
+    # metrics_path: /metrics
+    static_configs:
+    - targets: ['nbexporter.nbculling.svc.cluster.local:9878']
+
+## alertmanager sub-chart configurable values
+## Please see https://github.com/prometheus-community/helm-charts/tree/main/charts/alertmanager
+##
+alertmanager:
+  enabled: true
+  persistence:
+    size: 5Gi
+  config:
+    global: 
+    receivers:
+    - name: prometheus-msteams
+      webhook_configs:
+      - url: "http://prometheus-msteams:2000/aicoe"
+        send_resolved: true
+    route:
+      group_interval: 5m
+      group_wait: 10s
+      group_by: ['...']
+      receiver: 'prometheus-msteams'
+      repeat_interval: 3h
+
+prometheus-node-exporter:
+  enabled: true
+  rbac:
+    pspEnabled: false
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+  hostNetwork: false

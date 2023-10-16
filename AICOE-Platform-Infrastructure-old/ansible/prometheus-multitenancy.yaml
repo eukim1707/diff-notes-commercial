@@ -1,0 +1,57 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: Deploy Prometheus Multitenancy Changes
+      block:
+
+        # Prepare prometheus-multitenancy directory on bastion
+        - name: Remove prometheus-multitenancy folder if exists
+          file:
+            path: "/home/{{ username }}/src/prometheus-multitenancy"
+            state: absent
+
+        - name: ensure prometheus-multitenancy directory exists
+          file:
+            path: "/home/{{ username }}/src/prometheus-multitenancy"
+            state: directory
+            mode: g+rw
+            owner: "{{ username }}"
+            group: "{{ username }}"
+
+       
+        # Get files ready on bastion
+        - name: Copy prometheus-multitenancy files to bastion host
+          template:
+            src: "{{ item }}"
+            dest: "/home/{{ username }}/src/prometheus-multitenancy/{{ item | basename | replace('-template','')}}"
+          with_fileglob:
+            - "alertmanager/prometheus-multitenancy/*"
+    
+        - name: apply sa, roles and pod yaml
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "{{ item }}"
+          with_items:
+          - src/prometheus-multitenancy/prometheus-multitenancy-sa.yaml
+          - src/prometheus-multitenancy/prometheus-multitenancy-roles.yaml
+          - src/prometheus-multitenancy/prometheus-multitenancy-pod.yaml
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          
+        - name: restart rollout ms-teams-deployment
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl -n grafana rollout restart deploy prometheus-msteams"
+
+        - name: restart rollout prometheus-alertmanager sts
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl -n grafana rollout restart sts prometheus-alertmanager"
+       
+      tags:
+        prometheus-multitenancy
+    

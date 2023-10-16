@@ -1,0 +1,35 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: minio-console
+  namespace: cserver-minio
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - kubeflow/kubeflow-gateway
+  http:
+  - match:
+    - withoutHeaders:
+        cookie:
+          regex: .*token.*
+      uri:
+        exact: "/minio/api/v1/session"
+    - uri:
+        exact: "/minio/api/v1/logout"
+    redirect:
+      uri: "/minio/api/v1/login"
+      authority: "cserver-console.cserver-minio.svc.cluster.local:9090"
+      redirectCode: 302
+  - match:
+    - uri:
+        prefix: "/minio/"
+    - uri:
+        prefix: "/minio"
+    rewrite:
+      uri: "/"
+    route:
+    - destination:
+        port:
+          number: 9090
+        host: cserver-console.cserver-minio.svc.cluster.local

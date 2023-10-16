@@ -1,0 +1,156 @@
+---
+- name: Copy alertmanager yaml files 
+  template:
+    src: "{{ item }}"
+    dest: "/home/{{ username }}/src/{{ item | basename | replace('-template','')}}"
+  with_fileglob:
+    - "alertmanager/*-template.yaml"
+
+- name: ensure alert-rules directory exists
+  file:
+    path: "/home/{{ username }}/src/alert-rules"
+    state: directory
+    mode: g+rw
+    owner: "{{ username }}"
+    group: "{{ username }}"
+
+- name: copy alert-rules.yaml
+  copy:
+    src: alertmanager/alert-rules.yaml
+    dest: "/home/{{ username }}/src/alert-rules/alert-rules.yaml"
+
+- name: copy kustomization-prometheus.yaml
+  template:
+    src: "{{ item }}"
+    dest: "/home/{{ username }}/src/alert-rules/{{ item | basename | replace('-prometheus','')}}"
+  with_fileglob:
+    - "alertmanager/*-prometheus.yaml"
+
+- name: Export prometheus-server configmap to a file
+  become: yes
+  become_user: "{{ username }}"
+  shell: |
+    kubectl --kubeconfig=/home/{{ username }}/.kube/config -n grafana get cm prometheus-server -o yaml
+  register: configmap_output
+  vars:
+    ansible_python_interpreter: /usr/bin/python3 
+
+- name: Save ConfigMap content to file
+  copy:
+    content: "{{ configmap_output.stdout  }}"
+    dest: "/home/{{ username }}/src/alert-rules/prometheus-server-cm.yaml"
+
+- name: run kustomize command to patch prometheus-server configmap
+  become: yes
+  become_user: "{{ username }}"
+  shell: "/usr/local/bin/kustomize build . | kubectl apply -f -"
+  args:
+    chdir: "/home/{{ username }}/src/alert-rules/"
+
+- name: Add prometheus-msteams helm repo
+  become: yes
+  become_user: "{{ username }}"
+  kubernetes.core.helm_repository:
+    name: prometheus-msteams
+    repo_url: https://prometheus-msteams.github.io/prometheus-msteams
+    binary_path: /usr/local/bin/helm
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Add cert-exporter helm repo
+  become: yes
+  become_user: "{{ username }}"
+  kubernetes.core.helm_repository:
+    name: cert-exporter
+    repo_url: https://joe-elliott.github.io/cert-exporter/
+    binary_path: /usr/local/bin/helm
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Install prometheus-msteams with Helm 
+  become: yes
+  become_user: "{{ username }}"
+  kubernetes.core.helm:
+    name: prometheus-msteams
+    chart_ref: prometheus-msteams/prometheus-msteams
+    binary_path: /usr/local/bin/helm
+    update_repo_cache: yes
+    release_namespace: grafana
+    create_namespace: true
+    chart_version: 1.3.4
+    values_files:
+      - "/home/{{ username }}/src/values-prometheus-msteams.yaml"
+    force: True
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Install Nvidia dcgm exporter 
+  become: yes
+  become_user: "{{ username }}"
+  kubernetes.core.k8s:      
+    state: present
+    src: "/home/{{ username }}/src/dcgm-exporter.yaml"
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Install k8s-event-exporter
+  become: yes
+  become_user: "{{ username }}"
+  kubernetes.core.k8s:      
+    state: present
+    src: "/home/{{ username }}/src/k8s-event-exporter.yaml"
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Install cert-exporter with Helm 
+  become: yes
+  become_user: "{{ username }}"
+  kubernetes.core.helm:
+    name: cert-exporter
+    chart_ref: cert-exporter/cert-exporter
+    binary_path: /usr/local/bin/helm
+    update_repo_cache: yes
+    release_namespace: grafana
+    chart_version: 3.4.1
+    values_files:
+      - "/home/{{ username }}/src/values-cert-exporter.yaml"
+    force: True
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Install prometheus-blackbox-exporter with Helm 
+  become: yes
+  become_user: "{{ username }}"
+  kubernetes.core.helm:
+    name: prometheus-blackbox-exporter
+    chart_ref: prometheus-community/prometheus-blackbox-exporter
+    binary_path: /usr/local/bin/helm
+    update_repo_cache: yes
+    release_namespace: grafana
+    chart_version: 8.2.0
+    values_files:
+      - "/home/{{ username }}/src/values-blackbox-exporter.yaml"
+    force: True
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Install kubecost-exporter with Helm
+  become: yes
+  become_user: "{{ username }}"
+  kubernetes.core.helm:
+    name: kubecost
+    chart_repo_url: https://kubecost.github.io/cost-analyzer/
+    chart_ref: cost-analyzer
+    chart_version: 1.105.2
+    namespace: grafana
+    values:
+      prometheus.nodeExporter.enabled: false
+      prometheus.serviceAccounts.nodeExporter.create: false
+      prometheus.kubeStateMetrics.enabled: false
+      global.prometheus.fqdn: http://prometheus-server.grafana.svc:9090
+      global.prometheus.enabled: false
+    binary_path: /usr/local/bin/helm
+    update_repo_cache: yes
+    force: True
+  vars:
+    ansible_python_interpreter: /usr/bin/python3

@@ -1,0 +1,34 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: deploy autoscaler
+      block:
+
+        - name: wait for cluster to be available
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get nodes"
+          register: nodes
+          until:      
+            - '" Ready "  in nodes.stdout'   
+          retries: 30
+          delay: 10
+
+        - name: copy autoscaler template yaml file to bastion 
+          template:
+            src: cluster-autoscaler-autodiscovery.yaml
+            dest: "/home/{{ username }}/src/cluster-autoscaler-autodiscovery.yaml"
+
+        - name: apply autoscaler file
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/cluster-autoscaler-autodiscovery.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+            
+      tags:
+        autoscaler

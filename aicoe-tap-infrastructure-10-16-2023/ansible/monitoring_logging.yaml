@@ -1,0 +1,140 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: deploy grafana, prometheus, loki, promtail
+      block:
+
+        - name: copy prom-graf-values.yaml
+          copy:
+            src: prom-graf-values.yaml
+            dest: "/home/{{ username }}/src/prom-graf-values.yaml"
+
+        - name: copy loki-simple-scalable-values.yaml
+          copy:
+            src: loki-simple-scalable-values.yaml
+            dest: "/home/{{ username }}/src/loki-simple-scalable-values.yaml"
+
+        - name: copy promtail-values.yaml
+          copy:
+            src: promtail-values.yaml
+            dest: "/home/{{ username }}/src/promtail-values.yaml"
+
+        - name: copy grafana-vs.yaml
+          copy:
+            src: grafana-vs.yaml
+            dest: "/home/{{ username }}/src/grafana-vs.yaml"
+
+        - name: add prometheus-community helm repo
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm_repository:
+            name: prometheus-community
+            repo_url: https://prometheus-community.github.io/helm-charts
+            binary_path: /usr/local/bin/helm
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: add grafana helm repo
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm_repository:
+            name: grafana
+            repo_url: https://grafana.github.io/helm-charts
+            binary_path: /usr/local/bin/helm
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: wait for cluster to be available
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get nodes"
+          register: nodes
+          until:      
+            - '" Ready "  in nodes.stdout'   
+          retries: 50
+          delay: 10
+
+        - name: install prometheus and grafana with Helm
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm:
+            name: prometheus-grafana
+            chart_ref: prometheus-community/kube-prometheus-stack
+            binary_path: /usr/local/bin/helm
+            update_repo_cache: yes
+            release_namespace: grafana
+            create_namespace: true
+            values:
+              grafana:
+                env:
+                  GF_SERVER_ROOT_URL: "https://{{ istio_dns }}.{{ hosted_zone }}/grafana/"
+                  GF_SERVER_DOMAIN: "{{ istio_dns }}.{{ hosted_zone }}"
+                  GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+                adminPassword: "{{ team }}-prom-operator"
+            values_files:
+              - "/home/{{ username }}/src/prom-graf-values.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          tags: promgraf
+
+        - name: install loki with Helm
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm:
+            name: loki
+            chart_ref: grafana/loki-simple-scalable
+            binary_path: /usr/local/bin/helm
+            update_repo_cache: yes
+            release_namespace: grafana
+            values:
+              loki:
+                storage:
+                  bucketNames:
+                    chunks: "{{ bucket_name }}" 
+                    ruler: "{{ bucket_name }}" 
+                    admin: "{{ bucket_name }}" 
+                  type: s3
+                  s3:
+                    s3: s3://"{{ aws_region }}"/"{{ bucket_name }}"
+                    bucketnames: "{{ bucket_name }}"
+                    region: "{{ aws_region }}"
+              serviceAccount:
+                create: true
+                name: edp-loki
+                annotations:
+                  eks.amazonaws.com/role-arn: "arn:aws:iam::{{ aws_account_id }}:role/{{ cluster_name }}-loki-iam-role"
+            values_files:
+              - "/home/{{ username }}/src/loki-simple-scalable-values.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          tags: lokih
+
+        - name: ensure loki pods are running
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get pods -n grafana --selector=app.kubernetes.io/instance=loki -o json"
+          register: podsistio
+          until: 
+            - podsistio.stdout|from_json|json_query('items[*].status.phase')|unique == ["Running"]
+          retries: 360
+          delay: 10
+          tags: lokip
+
+        - name: install promtail with Helm
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm:
+            name: promtail
+            chart_ref: grafana/promtail
+            binary_path: /usr/local/bin/helm
+            update_repo_cache: yes
+            release_namespace: grafana
+            values_files:
+              - "/home/{{ username }}/src/promtail-values.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+      tags:
+        grafana

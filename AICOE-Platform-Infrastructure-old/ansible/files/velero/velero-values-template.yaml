@@ -1,0 +1,37 @@
+# This helm chart values template is version 4.4.1 compatible.
+
+configuration:
+  backupStorageLocation:
+  - name: default
+    bucket: {{ S3BUCKET }}
+    prefix: {{ S3BACKUPPATH }}
+    config:
+      region: "{{ aws_region }}"
+    provider: aws
+  volumeSnapshotLocation:
+  - name: default
+    config:
+      region: "{{ aws_region }}"
+    provider: aws
+  # Set true for backup all pod volumes without having to apply annotation on the pod when used file system backup Default: false.
+  defaultVolumesToFsBackup: true
+credentials:
+  useSecret: false
+initContainers:
+- name: velero-plugin-for-aws
+  image: velero/velero-plugin-for-aws:v1.7.0
+  volumeMounts:
+  - mountPath: /target
+    name: plugins
+serviceAccount:
+  server:
+    create: true
+    name: "{{ service_account }}"
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::{{ aws_account_id }}:role/{{ role_name }}"
+deployNodeAgent: true
+nodeAgent:
+  tolerations:
+  - effect: NoSchedule
+    key: workers
+    value: Exists

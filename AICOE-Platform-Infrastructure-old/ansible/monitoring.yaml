@@ -1,0 +1,113 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: deploy grafana, prometheus
+      block:
+
+        - name: copy grafana helm values file
+          copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.dest }}"
+          loop:
+            - src: values-grafana.yaml
+              dest: /home/{{ username }}/src/
+
+        - name: Copy prometheus grafana helm values file
+          template:
+            src: "{{ item }}"
+            dest: "/home/{{ username }}/src/{{ item | basename | replace('-template','')}}"
+          with_fileglob:
+            - "values-prometheus-template.yaml"
+
+        - name: copy prometheusrules and servicemonitors CRDs
+          copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.dest }}" 
+          loop:
+            - src: alertmanager/crd-prometheusrules.yaml
+              dest: /home/{{ username }}/src/
+            - src: alertmanager/crd-servicemonitors.yaml
+              dest: /home/{{ username }}/src/
+            
+        - name: apply CRDs
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "{{ item }}"
+          with_items:
+          - src/crd-servicemonitors.yaml
+          - src/crd-prometheusrules.yaml
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+   
+        - name: add prometheus-community helm repo
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm_repository:
+            name: prometheus-community
+            repo_url: https://prometheus-community.github.io/helm-charts
+            binary_path: /usr/local/bin/helm
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: add grafana helm repo
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm_repository:
+            name: grafana
+            repo_url: https://grafana.github.io/helm-charts
+            binary_path: /usr/local/bin/helm
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: install prometheus Helm
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm:
+            name: prometheus
+            chart_ref: prometheus-community/prometheus
+            binary_path: /usr/local/bin/helm
+            update_repo_cache: yes
+            release_namespace: grafana
+            create_namespace: true
+            chart_version: 23.1.0
+            values_files:
+              - "/home/{{ username }}/src/values-prometheus.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: Install Grafana with Helm
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm:
+            name: grafana
+            chart_ref: grafana/grafana
+            binary_path: /usr/local/bin/helm
+            update_repo_cache: yes
+            release_namespace: grafana
+            create_namespace: true
+            chart_version: 6.57.4
+            values:
+              grafana.ini:
+                server:
+                  root_url: "https://{{ istio_dns }}.{{ hosted_zone }}/grafana/"
+                  domain: "{{ istio_dns }}.{{ hosted_zone }}"
+                  serve_from_sub_path: "true"
+              adminPassword: "{{ team }}-prom-operator"
+            values_files:
+              - "/home/{{ username }}/src/values-grafana.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+      tags:
+        grafana
+    
+    - name: Deploy exporters, msteams plugin, alert rules
+      block:
+        - name: Install All External Exporters, MSTeams
+          include_tasks: install_exporters.yaml
+
+      tags:
+        alerts

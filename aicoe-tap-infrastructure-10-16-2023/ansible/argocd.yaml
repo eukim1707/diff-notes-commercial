@@ -1,0 +1,466 @@
+- hosts: bastion
+  become: yes
+
+  vars:
+    git_token: "{{ lookup('env', 'git_token') }}"
+
+  tasks:
+
+    - name: deploy argocd
+      block:
+
+        - name: clone aicoe-tap-gitops repo
+          git:
+            repo: 'https://{{ git_token }}@github.com/Deloitte/aicoe-tap-gitops.git'
+            dest: src/gitops/
+            clone: yes
+            update: yes
+            force: yes
+            version: "{{ gitops_branch }}"
+
+        - name: fetch centraldashboard config file and put in localhost templates
+          ansible.builtin.fetch:
+            src: "/home/{{ username }}/src/gitops/overlays/centraldashboard/configmap.yaml"
+            dest: "{{ ansible_path }}/templates/centraldashboard-data.yaml"
+            flat: yes
+
+        - name: fetch dex-istio config file and put in localhost templates
+          ansible.builtin.fetch:
+            src: "/home/{{ username }}/src/gitops/overlays/dex-istio/configmap-patch.yaml"
+            dest: "{{ ansible_path }}/templates/dexistio-data.yaml"
+            flat: yes
+
+        - name: fetch oidc-authservice config file and put in localhost templates
+          ansible.builtin.fetch:
+            src: "/home/{{ username }}/src/gitops/overlays/oidc-authservice/config.yaml"
+            dest: "{{ ansible_path }}/templates/oidcauthservice-data.yaml"
+            flat: yes
+
+        - name: template out configmap file for centraldashboard
+          template:
+            force: yes
+            src: centraldashboard-data.yaml
+            dest: "/home/{{ username }}/src/gitops/overlays/centraldashboard/configmap.yaml" #"/home/{{ username }}/src/centraldashboard-data.yaml"
+
+        - name: template out configmap file for dex-istio
+          template:
+            force: yes
+            src: dexistio-data.yaml
+            dest: "/home/{{ username }}/src/gitops/overlays/dex-istio/configmap-patch.yaml" #"/home/{{ username }}/src/dexistio-data.yaml"
+
+        - name: template out configmap file for oidc-authservice
+          template:
+            force: yes
+            src: oidcauthservice-data.yaml
+            dest: "/home/{{ username }}/src/gitops/overlays/oidc-authservice/config.yaml" #"/home/{{ username }}/src/oidcauthservice-data.yaml"
+
+        - name: install argocd cli
+          get_url:
+            url: https://github.com/argoproj/argo-cd/releases/download/v2.0.1/argocd-linux-amd64
+            dest: /usr/local/bin/argocd
+            mode: 777     
+          
+        - name: run kustomize command to deploy argocd
+          become: yes
+          become_user: "{{ username }}"
+          shell: "/usr/local/bin/kustomize build . | kubectl apply -f -"
+          args:
+            chdir: "/home/{{ username }}/src/gitops/argocd"
+              
+        - name: copy argocd token file
+          template:
+            src: argocd_token.yaml
+            dest: "/home/{{ username }}/src/gitops/argocd_token.yaml"
+          environment:
+            git_token: "{{ git_token }}"
+
+        - name: apply argocd token
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/gitops/argocd_token.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: wait argocd pods to be running (may encounter delays due to pull rate limit)
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get pods -n argocd -o json"
+          register: pods
+          until: 
+            - pods.stdout|from_json|json_query('items[*].status.phase')|unique == ["Running"]
+          retries: 360
+          delay: 10
+
+        - name: apply root.yaml
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/gitops/root.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: get nvidia plugin yaml
+          get_url:
+            url: https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.9.0/nvidia-device-plugin.yml
+            dest: /home/{{ username }}/src/nvidia-device-plugin.yml
+
+        - name: set up gpus
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            state: present
+            src: /home/{{ username }}/src/nvidia-device-plugin.yml                    
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: make sure kubeflow namespace is available
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s_info:
+            kind: Namespace
+            name: kubeflow
+            wait: yes
+            wait_sleep: 5
+            wait_timeout: 180
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: copy profile controller service account
+          template:
+            src: profile-controller-sa.yaml
+            dest: "/home/{{ username }}/src/profile-controller-sa.yaml"
+
+        - name: apply profile controller service account
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/profile-controller-sa.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          
+        # Check for all applications in argocd here
+        - name: ensure istio-ingressgateway pod is running
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get pods -n istio-system --selector=app=istio-ingressgateway -o json"
+          register: podsistio
+          until: 
+            - podsistio.stdout|from_json|json_query('items[*].status.phase')|unique == ["Running"]
+          retries: 360
+          delay: 10
+        
+        - name: copy istio ingress template
+          template:
+            src: istio-ingress.yaml
+            dest: "/home/{{ username }}/src/istio-ingress.yaml"
+
+        - name: apply istio ingress
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/istio-ingress.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3  
+
+        - name: copy argocd vs
+          copy:
+            src: argocd-server-vs.yaml
+            dest: "/home/{{ username }}/src/argocd-server-vs.yaml"
+
+        - name: apply argocd vs
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/argocd-server-vs.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3 
+
+        - name: apply grafana vs
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/grafana-vs.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: get ALB DNS from istio ingress
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get ing -n istio-system istio-ingressgateway-alb -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
+          register: albistio
+          until: 
+            - albistio.stdout != ""
+          retries: 360
+          delay: 10
+
+        - name: set ALB DNS
+          set_fact:
+            alb_dns: "{{ albistio.stdout }}"
+
+        - name: create base DNS record
+          community.aws.route53:
+            state: present
+            zone: "{{ hosted_zone }}"
+            record: "{{ istio_dns }}.{{ hosted_zone }}"
+            type: CNAME
+            value: "{{ alb_dns }}"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: create wildcard DNS record
+          community.aws.route53:
+            state: present
+            zone: "{{ hosted_zone }}"
+            record: "*.{{ istio_dns }}.{{ hosted_zone }}"
+            type: CNAME
+            value: "{{ alb_dns }}" 
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        # - name: wait for kubeflow pods to be running (may encounter delays due to pull rate limit)
+        #   become: yes
+        #   become_user: "{{ username }}"
+        #   shell: "kubectl get pods -n kubeflow -o json"
+        #   register: kfpods
+        #   until: 
+        #     - kfpods.stdout|from_json|json_query('items[*].status.phase')|unique == ["Running"]
+        #   retries: 360
+        #   delay: 10
+
+        # - name: wait for knative-serving pods to be running (may encounter delays due to pull rate limit)
+        #   become: yes
+        #   become_user: "{{ username }}"
+        #   shell: "kubectl get pods -n knative-serving -o json"
+        #   register: kspods
+        #   until: 
+        #     - kspods.stdout|from_json|json_query('items[*].status.phase')|unique == ["Running"]
+        #   retries: 360 
+        #   delay: 10
+
+        - name: wait for cert-manager pods to be running (may encounter delays due to pull rate limit)
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get pods -n cert-manager -o json"
+          register: certpods
+          until: 
+            - certpods.stdout|from_json|json_query('items[*].status.phase')|unique == ["Running"]
+          retries: 360 
+          delay: 10
+
+        - name: wait for kube-system pods to be running (may encounter delays due to pull rate limit)
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get pods -n kube-system -o json"
+          register: kubepods
+          until: 
+            - kubepods.stdout|from_json|json_query('items[*].status.phase')|unique == ["Running"]
+          retries: 360
+          delay: 10
+
+        - name: make sure centraldashboard cm is available
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s_info:
+            kind: ConfigMap
+            namespace: kubeflow
+            name: centraldashboard-config
+            wait: yes
+            wait_sleep: 5
+            wait_timeout: 180
+          register: cmdash
+          until: cmdash.resources[0]['metadata']['creationTimestamp'] != ""
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        - debug:
+            var: cmdash.resources[0]['metadata']['creationTimestamp']
+
+        - name: make sure dex-istio cm is available
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s_info:
+            kind: ConfigMap
+            namespace: auth
+            name: dex
+            wait: yes
+            wait_sleep: 5
+            wait_timeout: 180
+          register: cmdex
+          until: cmdex.resources[0]['metadata']['creationTimestamp'] != ""
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        - debug:
+            var: cmdex.resources[0]['metadata']['creationTimestamp']
+
+        - name: make sure oidc-authservice cm is available
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s_info:
+            kind: ConfigMap
+            namespace: istio-system
+            name: oidc-authservice-parameters
+            wait: yes
+            wait_sleep: 5
+            wait_timeout: 600
+          register: cmoidc
+          until: cmoidc.resources[0]['metadata']['creationTimestamp'] != ""
+          vars:
+            ansible_python_interpreter: /usr/bin/python3 
+        - debug:
+            var: cmoidc.resources[0]['metadata']['creationTimestamp'] 
+
+        - name: make sure centraldashboard pod is scheduled
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s_info:
+            kind: Pod 
+            namespace: kubeflow
+            label_selectors:
+              - app = centraldashboard
+            wait: yes
+            wait_condition:
+              type: PodScheduled
+              status: "True"
+            wait_sleep: 5
+            wait_timeout: 600
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: patch centraldashboard configmap
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            state: patched
+            kind: ConfigMap
+            namespace: kubeflow
+            name: centraldashboard-config
+            src: "/home/{{ username }}/src/gitops/overlays/centraldashboard/configmap.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          register: centraldashboard
+
+        - name: restart rollout centraldashboard deployment if patch changed configmap
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl rollout restart deploy -n kubeflow centraldashboard"
+          when: centraldashboard.changed
+
+        - name: make sure dex pod is scheduled
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s_info:
+            kind: Pod 
+            namespace: auth
+            label_selectors:
+              - app = dex
+            wait: yes
+            wait_condition:
+              type: PodScheduled
+              status: "True"
+            wait_sleep: 5
+            wait_timeout: 600
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: patch dex-istio configmap
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            state: patched
+            kind: ConfigMap
+            namespace: auth
+            name: dex
+            src: "/home/{{ username }}/src/gitops/overlays/dex-istio/configmap-patch.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          register: dex
+
+        - name: restart rollout dex deployment if patch changed configmap
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl rollout restart deploy -n auth dex"
+          when: dex.changed
+
+        - name: make sure oidc-authservice statefulset is available
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s_info:
+            kind: Pod 
+            namespace: istio-system
+            label_selectors:
+              - app = authservice
+            wait: yes
+            wait_condition:
+              type: PodScheduled
+              status: "True"
+            wait_sleep: 5
+            wait_timeout: 600 
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: patch oidc-authservice configmap
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: oidc-authservice-parameters
+                namespace: istio-system
+              data:
+                OIDC_PROVIDER: "https://{{ istio_dns }}.{{ hosted_zone }}/dex"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          register: oidc
+
+        - name: restart rollout authservice statefulset if patch changed configmap
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl rollout restart statefulset -n istio-system authservice"
+          when: oidc.changed
+
+        - name: delete authservice-0 pod to ensure it picks up patched configmap
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            state: absent
+            kind: Pod
+            namespace: istio-system
+            name: authservice-0
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          when: oidc.changed
+
+        # Adding knative serving cm update
+        - name: copy knative-serving config-domain template yaml file to bastion 
+          template:
+            src: knative-config-domain.yaml
+            dest: "/home/{{ username }}/src/knative-config-domain.yaml"
+
+        # - name: wait for knative-serving namespace to be available
+        #   become: yes
+        #   become_user: "{{ username }}"
+        #   shell: "kubectl get ns knative-serving -o json"
+        #   register: kns
+        #   until:
+        #     - kns.stdout|from_json|json_query("status.phase") == "Active"
+        #   retries: 20
+        #   delay: 5
+
+        # - name: apply knative-serving config-domain file
+        #   become: yes
+        #   become_user: "{{ username }}"
+        #   kubernetes.core.k8s:      
+        #     state: present
+        #     src: "/home/{{ username }}/src/knative-config-domain.yaml"
+        #   vars:
+        #     ansible_python_interpreter: /usr/bin/python3
+      tags:
+        argocd

@@ -1,0 +1,54 @@
+{
+    "Statement": [
+        {
+            "Action": [
+                "s3:ListBucket"
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "s3:delimiter": [
+                        "/"
+                    ],
+                    "s3:prefix": [
+                        "",
+                        "notebookculling"
+                    ]
+                }
+            },
+            "Effect": "Allow",
+            "Resource": [
+                "arn:aws:s3:::${platform_metadata_bucket_name}"
+            ],
+            "Sid": "AllowStatement2B"
+        },
+        {
+            "Action": [
+                "s3:ListBucket"
+            ],
+            "Condition": {
+                "StringLike": {
+                    "s3:prefix": [
+                        "notebookculling/*"
+                    ]
+                }
+            },
+            "Effect": "Allow",
+            "Resource": [
+                "arn:aws:s3:::${platform_metadata_bucket_name}"
+            ],
+            "Sid": "AllowStatement3"
+        },
+        {
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject"
+            ],
+            "Effect": "Allow",
+            "Resource": [
+                "arn:aws:s3:::${platform_metadata_bucket_name}/notebookculling/*"
+            ],
+            "Sid": "AllowStatement4B"
+        }
+    ],
+    "Version": "2012-10-17"
+}

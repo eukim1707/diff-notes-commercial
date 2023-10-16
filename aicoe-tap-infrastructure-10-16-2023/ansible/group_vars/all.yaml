@@ -1,0 +1,37 @@
+---
+username: ec2-user
+ansible_path: "{{ hostvars['localhost'].ansible_path}}"
+bucket_name: "{{ hostvars['localhost'].bucket_name}}"
+aws_region: "{{ hostvars['localhost'].aws_region}}"
+aws_account_id: "{{ hostvars['localhost'].aws_account_id}}"
+key_name: "{{ hostvars['localhost'].key_name}}"
+istio_dns: "{{ hostvars['localhost'].istio_dns}}"
+istio_cert: "{{ hostvars['localhost'].istio_cert}}"
+hosted_zone: "{{ hostvars['localhost'].hosted_zone}}"
+gitops_branch: "{{ hostvars['localhost'].gitops_branch}}"
+client_id: "{{ hostvars['localhost'].client_id}}"
+client_secret: "{{ hostvars['localhost'].client_secret}}"
+bastion_dns: "{{ hostvars['localhost'].bastion_dns}}"
+cluster_name: "{{ hostvars['localhost'].cluster_name}}"
+team: "{{ hostvars['localhost'].team}}"
+oidc_url: "{{ hostvars['localhost'].oidc_url}}"
+route_kubeflow_path: /usr/local/route_kubeflow
+security_group: "{{ hostvars['localhost'].security_group}}"
+routeable_subnet_1_id: "{{ hostvars['localhost'].routeable_subnet_1_id}}"
+routeable_subnet_2_id: "{{ hostvars['localhost'].routeable_subnet_2_id}}"
+nonrouteable_subnet_1_id: "{{ hostvars['localhost'].nonrouteable_subnet_1_id}}"
+nonrouteable_subnet_2_id: "{{ hostvars['localhost'].nonrouteable_subnet_2_id}}"
+efs_filesystem_id: "{{ hostvars['localhost'].efs_filesystem_id}}"
+ssh_access: "True"
+
+gpu_group_max: "{{ hostvars['localhost'].gpu_group_max}}"
+gpu_group_min: "{{ hostvars['localhost'].gpu_group_min}}"
+gpu_group_default: "{{ hostvars['localhost'].gpu_group_default}}"
+
+infrastructure_group_max: "{{ hostvars['localhost'].infrastructure_group_max}}"
+infrastructure_group_min: "{{ hostvars['localhost'].infrastructure_group_min}}"
+infrastructure_group_default: "{{ hostvars['localhost'].infrastructure_group_default}}"
+
+worker_group_max: "{{ hostvars['localhost'].worker_group_max}}"
+worker_group_min: "{{ hostvars['localhost'].worker_group_min}}"
+worker_group_default: "{{ hostvars['localhost'].worker_group_default}}"

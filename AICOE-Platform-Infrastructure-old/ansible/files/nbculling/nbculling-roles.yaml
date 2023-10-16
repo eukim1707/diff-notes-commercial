@@ -1,0 +1,74 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nbculling-list-services-role
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["*"]
+  verbs: ["list","get"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nbculling-list-services-role-binding
+  namespace: kube-system
+subjects:
+- kind: ServiceAccount
+  name: sa-nbculling
+  namespace: nbculling
+roleRef:
+  kind: Role
+  name: nbculling-list-services-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nbculling-list-nodes-cluster-role
+rules:
+- apiGroups: ["","kubeflow.org"]
+  resources: ["nodes","profiles","pods","notebooks"]
+  verbs: ["list","get","patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nbculling-list-nodes-cluster-role-binding
+subjects:
+- kind: ServiceAccount
+  name: sa-nbculling
+  namespace: nbculling
+roleRef:
+  kind: ClusterRole
+  name: nbculling-list-nodes-cluster-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+#For pod Logs
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nbculling-get-pod-logs-role
+  namespace: kubeflow
+rules:
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nbculling-get-pod-logs-role-binding
+  namespace: kubeflow
+subjects:
+- kind: ServiceAccount
+  name: sa-nbculling
+  namespace: nbculling
+roleRef:
+  kind: Role
+  name: nbculling-get-pod-logs-role
+  apiGroup: rbac.authorization.k8s.io

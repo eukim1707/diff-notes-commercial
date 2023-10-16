@@ -1,0 +1,146 @@
+---
+- hosts: bastion
+  become: yes
+
+  vars:
+    service_account: sa-velero
+    S3BUCKET: "{{ platform_metadata_bucket_name }}"
+    S3BACKUPPATH: "velero-backups/{{ cluster_name }}"
+    role_name: "{{ cluster_name }}-velero-backup-role"                             # This is an IAM Role
+    recovery_role_name: "{{ cluster_name }}-velero-recovery-role"                  # This is an IAM Role
+    velero_helm_chart_version: 4.4.1                                               # This will install the velero version v1.11.1
+    velero_version: "v1.11.1"
+    velero_backup_retention_period: "720h"                                         # For non-prod environment, we can set it to 168h (1 week). Default: 720h (1 month)
+
+  tasks:
+
+    - name: Deploying Velero Resources for Backup and restore
+      block:
+
+        - name: Ensure Bucket should be present for storing velero backups
+          amazon.aws.s3_bucket:
+            name: "{{ S3BUCKET }}"
+            state: present
+            public_access:
+              block_public_acls: true
+              ignore_public_acls: true
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+            bucket_policy: "{{ lookup('template', 'bucket_policy.json') }}"
+          
+        - name: Configure a lifecycle rule to transition files to infrequent access after 30 days and glacier after 90
+          community.aws.s3_lifecycle:
+            name: "{{ S3BUCKET }}"
+            rule_id: velero-s3-bucket-lifecycle-rule
+            state: present
+            status: enabled
+            transitions:
+              - transition_days:  "{{ transition_to_standard_ia_days }}"
+                storage_class: standard_ia
+              - transition_days: "{{ transition_to_glacier_days }}"
+                storage_class: glacier
+            expiration_days: "{{ days_until_data_deletion }}"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+          when: apply_lifecycle_rule
+
+        - name: Remove velero folder if exists
+          file:
+            path: "/home/{{ username }}/src/velero"
+            state: absent
+
+        - name: Remove velero CLI if exists
+          file:
+            path: "/usr/local/bin/velero"
+            state: absent
+
+        - name: Ensure velero directory exists
+          file:
+            path: "/home/{{ username }}/src/velero"
+            state: directory
+            mode: g+rw
+            owner: "{{ username }}"
+            group: "{{ username }}"
+
+        - name: Copy velero files to bastion host
+          template:
+            src: "{{ item }}"
+            dest: "/home/{{ username }}/src/velero/{{ item | basename | replace('-template','')}}"
+          with_fileglob:
+            - "velero/*"
+
+        - name: Create a velero namespace
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            api_version: v1
+            state: present
+            kind: Namespace
+            name: velero
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Add helm repo for velero
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm_repository:
+            name: vmware-tanzu
+            repo_url: https://vmware-tanzu.github.io/helm-charts
+            binary_path: /usr/local/bin/helm
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Install velero using helm
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm:
+            name: velero
+            chart_ref: vmware-tanzu/velero
+            chart_version: "{{ velero_helm_chart_version }}"
+            binary_path: /usr/local/bin/helm
+            update_repo_cache: yes
+            release_namespace: velero
+            values_files:
+              - "/home/{{ username }}/src/velero/velero-values.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Get velero cli
+          unarchive:
+            src: https://github.com/vmware-tanzu/velero/releases/download/{{ velero_version }}/velero-{{ velero_version }}-linux-amd64.tar.gz
+            dest: /home/{{ username }}/src/velero
+            remote_src: yes
+
+        - name: Move velero cli
+          copy: 
+            src: /home/{{ username }}/src/velero/velero-{{ velero_version }}-linux-amd64/velero
+            dest: /usr/local/bin/velero
+            mode: '555'
+            remote_src: yes
+
+        - name: Remove velero cli zip
+          file:
+            state: absent
+            path: /home/{{ username }}/src/velero/velero-{{ velero_version }}-linux-amd64.tar.gz
+
+        # Configmap for velero restore. NOTE: MAKE sure to specify the Velero Backup Name to restore.
+        - name: Apply velero restore config map
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/velero/velero-configmap.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        # Cron job set to run at 1 am to take backup; backup name will be cluster_name-backup-timestamp
+        - name: Set velero-backup cronjob
+          become: yes
+          become_user: "{{ username }}"
+          shell: ./velero schedule create {{ cluster_name }}-backup --schedule='30 00 * * *' --include-cluster-resources=true --ttl={{ velero_backup_retention_period }}
+          args:
+            chdir: "/usr/local/bin/"
+            executable: /bin/bash
+          ignore_errors: yes
+
+      tags: k8s-velero

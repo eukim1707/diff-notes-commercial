@@ -1,0 +1,70 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: alb ingress controller
+      block:
+
+        - name: copy alb service account
+          template:
+            src: alb-sa.yaml
+            dest: "/home/{{ username }}/src/alb-sa.yaml"
+
+        - name: apply alb service account
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/alb-sa.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: tag routeable subnets for ELB
+          command: "aws ec2 create-tags --resources {{ item }} --region {{ aws_region }} --tags Key=kubernetes.io/cluster/{{ cluster_name }},Value=shared Key=kubernetes.io/role/elb,Value=1"
+          loop:
+            - "{{ routeable_subnet_1_id }}"
+            - "{{ routeable_subnet_2_id }}"
+
+        - name: add eks helm repo
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm_repository:
+            name: eks
+            repo_url: https://aws.github.io/eks-charts
+            binary_path: /usr/local/bin/helm
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: install ALB controller with Helm
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.helm:
+            name: aws-load-balancer-controller
+            chart_ref: eks/aws-load-balancer-controller
+            binary_path: /usr/local/bin/helm
+            update_repo_cache: yes
+            release_namespace: kube-system
+            values:
+              clusterName: "{{ cluster_name }}"
+              serviceAccount:
+                create: false
+                name: aws-load-balancer-controller
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        # - name: copy external-dns template
+        #   template:
+        #     src: external-dns.yaml
+        #     dest: "/home/{{ username }}/src/external-dns.yaml"
+
+        # - name: apply external-dns
+        #   become: yes
+        #   become_user: "{{ username }}"
+        #   kubernetes.core.k8s:      
+        #     state: present
+        #     src: "/home/{{ username }}/src/external-dns.yaml"
+        #   vars:
+        #     ansible_python_interpreter: /usr/bin/python3
+      tags:
+        alb

@@ -1,0 +1,52 @@
+---
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: get ALB DNS from istio ingress
+      become: yes
+      become_user: "{{ username }}"
+      shell: "kubectl get ing -n istio-system istio-ingressgateway-alb -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
+      register: albistio
+      until: 
+        - albistio.stdout != ""
+      retries: 360
+      delay: 10
+
+    - name: set ALB DNS
+      set_fact:
+        alb_dns: "{{ albistio.stdout }}"
+
+    - name: delete istio ingress
+      become: yes
+      become_user: "{{ username }}"
+      kubernetes.core.k8s:      
+        state: absent
+        src: "/home/{{ username }}/src/istio-ingress.yaml"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: delete base DNS record
+      community.aws.route53:
+        state: absent
+        zone: "{{ hosted_zone }}"
+        record: "{{ istio_dns }}.{{ hosted_zone }}"
+        type: CNAME
+        value: "{{ alb_dns }}"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: delete wildcard DNS record
+      community.aws.route53:
+        state: absent
+        zone: "{{ hosted_zone }}"
+        record: "*.{{ istio_dns }}.{{ hosted_zone }}"
+        type: CNAME
+        value: "{{ alb_dns }}"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: wait for ALB to be removed by ingress controller
+      pause:
+        minutes: 1

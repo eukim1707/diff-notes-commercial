@@ -1,0 +1,54 @@
+---
+- hosts: localhost
+  connection: local
+
+  vars:
+    ssh_key: "{{ lookup('env', 'TF_VAR_ssh_key') }}"
+    tf_state_bucket: "{{ lookup('env', 'TF_VAR_tf_state_bucket') }}"
+
+  tasks:
+    - name: run terraform apply
+      terraform:
+        variables_file: parameters.tfvars
+        #plan_file: plan.out
+        project_path: "../terraform-infrastructure"
+        state: present
+      register: terraform_output
+      environment:
+        TF_VAR_ssh_key: "{{ ssh_key }}"
+      tags: terraform
+
+    - debug:
+        var: terraform_output
+
+    - name: populate terraform outputs from tfstate file
+      import_tasks: 
+        file: outputs.yaml
+      tags: outputs
+
+    - name: ensure ~/.ssh/config file exists
+      copy:
+        content: ""
+        dest: "~/.ssh/config"
+        force: no
+        mode: 644
+
+    - name: edit .ssh/config
+      blockinfile:
+        path: "~/.ssh/config"
+        block: |
+          Host bastion
+            Hostname {{ bastion_dns }}
+            User {{ username }}
+            IdentityFile ~/.ssh/{{ key_name }}
+
+    - name: copy templated trust.json file to ansible files folder
+      template:
+        src: trust.json
+        dest: "{{ ansible_path }}/files/trust.json"
+
+    # - name: populate terraform outputs from tfstate file
+    #   block:
+    #     - name: Install ansible-galaxy collection 
+    #       shell: "ansible-galaxy collection install amazon.aws --force"
+    #   tags: ansible-galaxy

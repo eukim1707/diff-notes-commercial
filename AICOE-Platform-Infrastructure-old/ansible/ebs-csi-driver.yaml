@@ -1,0 +1,46 @@
+- hosts: bastion
+  become: yes
+
+  tasks:
+
+    - name: deploy ebs csi driver
+      block:
+
+        - name: wait for cluster to be available
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl get nodes"
+          register: nodes
+          until:      
+            - '" Ready "  in nodes.stdout'   
+          retries: 30
+          delay: 10
+
+        - name: install ebs csi driver
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl apply -k 'github.com/kubernetes-sigs/aws-ebs-csi-driver/deploy/kubernetes/base/?ref=release-1.16'"
+        
+        - name: annotate service account
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                name: ebs-csi-controller-sa
+                namespace: kube-system
+                annotations:
+                  eks.amazonaws.com/role-arn: arn:aws:iam::{{ aws_account_id }}:role/{{ cluster_name }}-ebs-iam-role
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: redeploy ebs-csi-controller deployment
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl rollout restart deploy -n kube-system ebs-csi-controller"
+
+      tags:
+        ebs

@@ -1,0 +1,17 @@
+{
+    "teams":
+    [
+        {
+            "team": "o-o",
+            "lead": "kibrunner@deloitte.com",
+            "members": [
+                "alkong@deloitte.com",
+                "dglessner@deloitte.com",
+                "frabbi@deloitte.com",
+                "badesanya@deloitte.com",
+                "ogeromosele@deloitte.com",
+                "tmallayil@deloitte.com"
+            ]
+        }
+    ]
+}

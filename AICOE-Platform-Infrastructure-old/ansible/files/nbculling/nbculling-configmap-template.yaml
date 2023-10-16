@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nb-parameter
+  namespace: nbculling
+data:
+  cputhresholdtime: '43200' #in seconds (12 hours) change as per your requirements
+  gputhresholdtime: '14400' # in seconds (4 hours) change as per your requirements
+  s3bucket: "{{ S3BUCKET }}"
+  clustername: "{{ cluster_name }}"
+  exclude_namespaces: "kubeflow-user-example-com" #Pass all namespaces with comma seperated

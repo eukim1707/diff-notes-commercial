@@ -1,0 +1,43 @@
+# This file is just for reference. In order to change the rules, modify them in the aicoe-tools repo and rebuild image
+# Repo link -> https://github.com/Deloitte/aicoe-tools/tree/dev-usi/tools/prometheus-alerting
+groups:
+- name: aicoe.platform.rules
+  rules:
+  
+  - alert: PVCUsage
+    annotations:
+      summary: PVC Usage is reaching limits
+      description: The PVC {{ $labels.persistentvolumeclaim }} usage is above 85%
+    expr: (kubelet_volume_stats_used_bytes{namespace="{{access_teams}}",persistentvolumeclaim!=""}/kubelet_volume_stats_capacity_bytes{namespace="{{access_teams}}",persistentvolumeclaim!=""})/(1024*1024) * 100 >85
+    for: 10s
+    labels:
+      severity: warning
+      team: {{access_teams}}
+
+  - alert: Kubeflow Notebook Uptime Alert
+    annotations:
+      summary: GPU notebooks can be idle for 4 hours until Culled. CPU notebooks can be idle for 12 hours until Culled
+      description: Kubeflow Notebook {{ $labels.notebook }} in Namespace {{ $labels.namespace }} is idle for more than 80% of threshold limit. Remaining time in minutes {{ $labels.rem_in_minutes}}
+    expr: notebook_uptime_ratio{namespace="{{access_teams}}"} > 80
+    for: 60s
+    labels:
+      severity: critical
+      team: {{access_teams}}
+  
+  - alert: Memory to CPU Ratio
+    annotations:
+      summary: The Notebook {{ $labels.pod }} is having a wrong Memory to CPU configurations.
+    expr: (sum(kube_pod_container_resource_requests{namespace="{{access_teams}}", pod!="",container!="istio-proxy",job!="kubecost",resource="memory"} / (1024*1024*1024)) by (container,namespace,pod)) / (sum(kube_pod_container_resource_requests{namespace="{{access_teams}}", pod!="",container!="istio-proxy",job!="kubecost",resource="cpu"}) by (container,namespace,pod)) > 4
+    for: 60s
+    labels:
+      severity: warning
+      team: {{access_teams}}
+
+  - alert: CPU to GPU Ratio
+    annotations:
+      summary: The Notebook {{ $labels.notebook }} is having a wrong CPU to GPU configurations.
+    expr: (sum(kube_pod_container_resource_requests{namespace="{{access_teams}}", pod!="",container!="istio-proxy",job!="kubecost",resource="cpu"}) by (pod)) / (sum(kube_pod_container_resource_requests{namespace="{{access_teams}}",pod!="",container!="istio-proxy",job!="kubecost",resource="nvidia_com_gpu"}) by (pod)) > 8
+    for: 60s
+    labels:
+      severity: warning
+      team: {{access_teams}}

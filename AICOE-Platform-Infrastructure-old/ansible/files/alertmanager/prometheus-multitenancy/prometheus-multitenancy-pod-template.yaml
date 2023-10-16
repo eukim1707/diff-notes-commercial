@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: prometheus-user-multitenancy
+  name: prometheus-user-multitenancy
+  namespace: grafana
+spec:
+  containers:
+    - name: prometheus-user-multitenancy    
+      image: {{ aws_account_id }}.dkr.ecr.us-east-1.amazonaws.com/aicoe-platform/prometheus-alerting:0.1.0
+      command: ["/bin/bash","-c","python3 alertscript.py && ./update_configmap.sh prometheus-server ./outputs/alerting_rules.yml && ./update_configmap.sh prometheus-alertmanager ./outputs/alertmanager.yml && ./update_configmap.sh prometheus-msteams-config ./outputs/connectors.yaml && echo Process Done!"]
+      imagePullPolicy: Always
+  serviceAccountName: sa-prometheus-alerting
+  dnsPolicy: ClusterFirst
+  restartPolicy: OnFailure

@@ -1,0 +1,99 @@
+# https://github.com/caicloud/event_exporter
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: event-exporter
+  namespace: grafana
+  labels:
+    name: event-exporter
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    name: event-exporter
+  name: event-exporter
+subjects:
+  - kind: ServiceAccount
+    name: event-exporter
+    namespace: grafana
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    name: event-exporter
+  name: event-exporter
+  namespace: grafana
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: event-exporter
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        prometheus.io/path: /metrics
+        prometheus.io/port: '9102'
+        prometheus.io/scrape: 'true'
+      labels:
+        app: event-exporter
+    spec:
+      containers:
+        - name: event-exporter #Using SA token (event-exporter) gets all events of whole cluster
+          image: 'caicloud/event-exporter:v1.0.0'
+          imagePullPolicy: Always
+          args:
+            - --eventType=Warning
+            - --eventType=Normal
+          ports:
+            - containerPort: 9102
+              name: http
+          resources:
+            limits:
+              memory: 100Mi
+            requests:
+              memory: 40Mi
+      serviceAccountName: event-exporter
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: event-exporter
+  name: event-exporter
+  namespace: grafana
+spec:
+  ports:
+    - name: http
+      port: 9102
+      targetPort: 9102
+  selector:
+    app: event-exporter
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor # used to forward metrics to prometheus
+metadata:
+  name: event-exporter
+  namespace: grafana
+  labels:
+    name: event-exporter
+    release: prometheus-grafana
+spec:
+  selector:
+    matchLabels:
+      name: event-exporter
+  endpoints:
+  - port: http #value 9102

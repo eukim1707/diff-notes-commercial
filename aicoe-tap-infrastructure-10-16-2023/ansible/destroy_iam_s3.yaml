@@ -1,0 +1,37 @@
+---
+- name: set fact for item's team name
+  set_fact:
+    team_name: "{{ item|json_query('team') }}"
+
+- debug:
+    var: team_name
+
+- name: save tfstate copy to a variable as a fact
+  set_fact:
+    jsondata: "{{ lookup('file', './terraform-copy.tfstate') }}"
+
+- name: set cluster name
+  set_fact:
+    cluster_name: "{{ jsondata | json_query('outputs.cluster_name.value') }}"
+
+- name: delete existing S3 bucket
+  amazon.aws.s3_bucket:
+    name: "{{ cluster_name }}-{{ team_name }}-bucket"
+    state: absent
+    force: yes
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: delete existing IAM Role
+  community.aws.iam_role:
+    name: "{{ cluster_name }}-{{ team_name }}-role"
+    state: absent
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: delete existing S3 policy
+  community.aws.iam_managed_policy:
+    policy_name: "{{ cluster_name }}-{{ team_name }}-s3bucketaccess"
+    state: absent
+  vars:
+    ansible_python_interpreter: /usr/bin/python3

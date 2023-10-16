@@ -1,0 +1,172 @@
+- hosts: bastion
+  become: yes
+  vars:
+    S3BUCKET: "{{ platform_metadata_bucket_name }}"
+
+  tasks:
+   
+    - name: Deploy Notebook-Culling 
+
+      block:
+        - name: Remove nbculling folder if exists
+          file:
+            path: "/home/{{ username }}/src/nbculling"
+            state: absent
+        
+        - name: Ensure Bucket should be present for storing nbculling logs per cluster 
+          amazon.aws.s3_bucket:
+            name: "{{ S3BUCKET }}"
+            state: present
+            public_access:
+              block_public_acls: true
+              ignore_public_acls: true
+              block_public_policy: true
+              restrict_public_buckets: true
+            policy: "{{ bucket_policy }}"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+            bucket_policy: "{{ lookup('template', 'bucket_policy.json') }}"
+
+        - name: Ensure Bucket should be present for storing nbculling logs per cluster 
+          amazon.aws.s3_bucket:
+            name: "{{ S3BUCKET }}"
+            state: present
+            public_access:
+              block_public_acls: true
+              ignore_public_acls: true
+              block_public_policy: true
+              restrict_public_buckets: true
+            policy: "{{ bucket_policy }}"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+            bucket_policy: "{{ lookup('template', 'bucket_policy.json') }}"
+
+        - name: ensure nbculling directory exists
+          file:
+            path: "/home/{{ username }}/src/nbculling"
+            state: directory
+            mode: g+rw
+            owner: "{{ username }}"
+            group: "{{ username }}"
+
+        - name: Create a nbculling namespace
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:
+            api_version: v1
+            state: present
+            kind: Namespace
+            name: nbculling
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        # Get files ready on bastion
+
+        - name: Copy nbculling files to bastion host
+          template:
+            src: "{{ item }}"
+            dest: "/home/{{ username }}/src/nbculling/{{ item | basename | replace('-template','')}}"
+          with_fileglob:
+            - "nbculling/*"
+
+        - name: Apply Service Account with IAM Role to Kubernetes Cluster for nbculling
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/nbculling-sa.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Apply roles.yaml file for serviceaccount sa-nbculling
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/nbculling-roles.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: Apply Authorization policy nbculling-auth.yaml
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/nbculling-auth.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Apply configmap nb-parameter
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/nbculling-configmap.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Apply nb-culling job manifest
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/nbculling-job.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: restart rollout notebook-controller-deployment
+          become: yes
+          become_user: "{{ username }}"
+          shell: "kubectl rollout restart deploy -n kubeflow notebook-controller-deployment"
+
+      tags: k8s-nbculling
+    
+    - name: Deploy Notebook-Custom-Exporter
+      block:
+
+        - name: Apply Config map for Notebook-Custom-Exporter
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/prom-cm.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: Apply Service Account for Notebook-Custom-Exporter
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/prom-sa.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Apply Cluster Role for Notebook-Custom-Exporter
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/prom-cluster-role.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Apply Service for Notebook-Custom-Exporter
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/promservice.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+        - name: Apply Deployment for Notebook-Custom-Exporter
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/nbculling/prom-deploy.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+      tags: nb_prom_exporter

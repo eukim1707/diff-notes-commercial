@@ -1,0 +1,15 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  annotations:
+    role: edit
+    user: USERNAME@deloitte.com # replace with the email of the user from your Active Directory case sensitive
+  name: user-USERNAME-deloitte-com-clusterrole-edit
+  namespace: NAMESPACE # replace with the namespace/profile name that you are adding contributors to
+spec:
+  action: ALLOW
+  rules:
+  - when:
+    - key: request.headers[kubeflow-userid] # for GCP, use x-goog-authenticated-user-email instead of kubeflow-userid for authentication purpose
+      values:
+      - USERNAME@deloitte.com # replace with the email of the user from your Active Directory case sensitive

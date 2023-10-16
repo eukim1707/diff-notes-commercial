@@ -1,0 +1,16 @@
+##############
+# This configmap is used by Velero recovery pod for restoring a backup.
+##############
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: velero-parameter
+  namespace: velero
+data:
+  cluster_name: {{ cluster_name }}
+  stop_notebooks: "false"                # change to "true" if you want to stop the notebooks after velero restore. When "false", manually stop them if stuck in Pending state.
+  # Mandatory
+  backup_name: ""
+  # Optional
+  namespaces_to_restore: ""              # Comma-separated namespaces

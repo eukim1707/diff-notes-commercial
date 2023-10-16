@@ -1,0 +1,21 @@
+{
+    "Version": "2012-10-17",
+    "Id": "SecurePolicy",
+    "Statement": [
+        {
+            "Sid": "AllowSSLRequestsOnly",
+            "Effect": "Deny",
+            "Principal": "*",
+            "Action": "s3:*",
+            "Resource": [
+                "arn:aws:s3:::{{ S3BUCKET }}",
+                "arn:aws:s3:::{{ S3BUCKET }}/*"
+            ],
+            "Condition": {
+                "Bool": {
+                    "aws:SecureTransport": "false"
+                }
+            }
+        }
+    ]
+}

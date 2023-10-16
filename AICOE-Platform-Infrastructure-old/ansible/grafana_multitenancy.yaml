@@ -1,0 +1,67 @@
+- hosts: bastion
+  become: yes
+  tasks:
+
+    - name: Deploy grafana-multitenancy
+
+      block:
+        - name: Remove grafana folder if exists
+          file:
+            path: "/home/{{ username }}/src/grafana"
+            state: absent
+
+        - name: ensure grafana directory exists
+          file:
+            path: "/home/{{ username }}/src/grafana"
+            state: directory
+            mode: g+rw
+            owner: "{{ username }}"
+            group: "{{ username }}"
+
+        # Get files ready on bastion
+
+        - name: Copy grafana files to bastion host
+          template:
+            src: "files/grafana/grafana-sa-template.yaml"
+            dest: "/home/{{ username }}/src/grafana/grafana-sa.yaml"
+
+        - name: Copy grafana files to bastion host
+          template:
+            src: "files/grafana/grafana-user-multitenancy.yaml"
+            dest: "/home/{{ username }}/src/grafana/grafana-user-multitenancy.yaml"
+
+        - name: Copy grafana files to bastion host
+          copy:
+            src: "files/grafana/grafanausers.csv"
+            dest: "/home/{{ username }}/src/grafana/grafanausers.csv"
+
+        # Create Grafana-multitenancy configmap to mount grafanausers CSV file to grafana-user-multitenancy pod
+        - name: create grafana-multitenancy-cm configmap
+          become: yes
+          become_user: "{{ username }}"
+          shell: |
+            kubectl create configmap grafana-multitenancy-cm -n grafana \
+              --from-file=/home/{{ username }}/src/grafana/grafanausers.csv
+          register: cm_output
+
+        - debug: msg="{{cm_output.stdout}}"
+
+        - name: Apply Service Account with IAM Role to Kubernetes Cluster for grafana
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/grafana/grafana-sa.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+        
+        - name: Apply Manifest for running grafana-user-multitenancy
+          become: yes
+          become_user: "{{ username }}"
+          kubernetes.core.k8s:      
+            state: present
+            src: "/home/{{ username }}/src/grafana/grafana-user-multitenancy.yaml"
+          vars:
+            ansible_python_interpreter: /usr/bin/python3
+
+      tags: grafana-multitenancy
